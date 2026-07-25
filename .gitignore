@@ -1,0 +1,10 @@
+# 민감정보 (DB 비밀번호, API 서비스키) - 실수로 올라가면 안 됨
+config.py
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# OS/에디터
+.DS_Store
+.vscode/
