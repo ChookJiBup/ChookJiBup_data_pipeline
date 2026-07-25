@@ -55,24 +55,29 @@ $$ LANGUAGE plpgsql;
 -- 1. users (사용자)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
-    user_id         BIGSERIAL PRIMARY KEY,
-    login_id        VARCHAR(50)  NOT NULL,                  -- 아이디
-    password_hash   VARCHAR(255) NOT NULL,                  -- 비밀번호 (해시 저장)
-    name            VARCHAR(50)  NOT NULL,                  -- 이름
-    birth_date      DATE,                                   -- 생년월일
-    joined_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),    -- 가입 일자
-    is_withdrawn    BOOLEAN      NOT NULL DEFAULT false,    -- 탈퇴 여부
-    withdrawn_at    TIMESTAMPTZ,                            -- [추가] 탈퇴 시점 기록
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),    -- [추가] 정보 수정 시각
-    CONSTRAINT uq_users_login_id UNIQUE (login_id)
+    user_id                 BIGSERIAL PRIMARY KEY,
+
+    kakao_id                BIGINT NOT NULL,                 -- 카카오 고유 ID
+    nickname                VARCHAR(100) NOT NULL,           -- 닉네임
+
+    profile_image_url       TEXT,                            -- 프로필 이미지
+    thumbnail_image_url     TEXT,                            -- 썸네일 이미지
+
+    email                   VARCHAR(255),                    -- 이메일(선택 동의)
+    gender                  VARCHAR(10),                     -- male / female
+    birthyear               CHAR(4),                         -- YYYY
+    birthday                CHAR(4),                         -- MMDD
+    phone_number            VARCHAR(30),                     -- 전화번호
+
+    joined_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    is_withdrawn            BOOLEAN NOT NULL DEFAULT false,
+    withdrawn_at            TIMESTAMPTZ,
+
+    CONSTRAINT uq_users_kakao_id UNIQUE(kakao_id),
+    CONSTRAINT uq_users_email UNIQUE(email)
 );
-
-DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
-CREATE TRIGGER trg_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-
 -- ------------------------------------------------------------
 -- 2. admins (관리자)
 -- ------------------------------------------------------------
