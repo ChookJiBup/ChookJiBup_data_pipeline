@@ -7,7 +7,7 @@ import psycopg2.extras
 
 from config import API_CONFIG
 from db import get_conn
-from utils import to_num
+from utils import to_num, parse_date_string, compute_progress_status
 
 log = logging.getLogger(__name__)
 
@@ -79,8 +79,14 @@ def save(items):
     매칭이 잘 안 되는 사례가 보이면 이 자연키를 재검토해야 합니다.
 
     source_type='manual' (관리자가 직접 등록한 축제)는 이 UPSERT 대상이 아니라서 건드리지 않습니다.
+
+    progress_status(예정/진행중/종료)도 이 시점에 바로 계산해서 채웁니다 — start_date/end_date를
+    파싱해서 오늘 날짜와 비교하는 로직은 festival_status_updater.py와 동일한 규칙을 utils.py의
+    compute_progress_status()로 공유합니다. 이후로는 festival_status_updater.py가 매일 새벽
+    6시(또는 파이프라인 재실행 시)마다 다시 갱신합니다.
     """
     run_started_at = datetime.now(timezone.utc)  # 이번 실행에서 "API에 여전히 존재함"으로 찍을 시각
+    today = run_started_at.date()  # 이번 실행 내내 동일한 기준일을 써서 행마다 다른 날짜로 계산되지 않게 함
 
     conn = get_conn()
     cur = conn.cursor()
@@ -99,14 +105,23 @@ def save(items):
                 continue
 
             start_date = it.get("festivalStartDate") or it.get("fstvlStartDate")
+            end_date = it.get("festivalEndDate") or it.get("fstvlEndDate")
             road_address = it.get("roadNmAddr") or it.get("rdnmadr")
             natural_key = (festival_name, start_date or "1900-01-01", road_address or "")
+
+            # progress_status는 최초 적재 시점부터 바로 값이 들어가도록 여기서 미리 계산해둔다.
+            # (그 뒤로는 festival_status_updater.py가 매일 새벽 6시/파이프라인 실행마다 다시 갱신한다.)
+            progress_status = compute_progress_status(
+                parse_date_string(start_date),
+                parse_date_string(end_date),
+                today,
+            )
 
             deduped[natural_key] = (
                 festival_name,
                 it.get("opar") or it.get("eventPlace"),
                 start_date,
-                it.get("festivalEndDate") or it.get("fstvlEndDate"),
+                end_date,
                 it.get("festivalContent") or it.get("fstvlCo"),
                 it.get("mnnstNm"),
                 it.get("auspcInsttNm"),
@@ -120,6 +135,8 @@ def save(items):
                 to_num(it.get("longitude") or it.get("lo")),
                 it.get("referenceDate") or it.get("baseYmd"),
                 json.dumps(it, ensure_ascii=False),
+                run_started_at,
+                progress_status,
                 run_started_at,
             )
 
@@ -141,27 +158,30 @@ def save(items):
                 festival_name, event_place, start_date, end_date, content,
                 supervisor_org, host_org, sponsor_org, phone_number, homepage_url,
                 related_info, road_address, jibun_address, latitude, longitude,
-                api_reference_date, raw_payload, api_last_seen_at
+                api_reference_date, raw_payload, api_last_seen_at,
+                progress_status, progress_status_updated_at
             ) VALUES %s
             ON CONFLICT (festival_name, (COALESCE(start_date, DATE '1900-01-01')), (COALESCE(road_address, '')))
                 WHERE source_type = 'api'
             DO UPDATE SET
-                event_place         = EXCLUDED.event_place,
-                end_date            = EXCLUDED.end_date,
-                content             = EXCLUDED.content,
-                supervisor_org      = EXCLUDED.supervisor_org,
-                host_org            = EXCLUDED.host_org,
-                sponsor_org         = EXCLUDED.sponsor_org,
-                phone_number        = EXCLUDED.phone_number,
-                homepage_url        = EXCLUDED.homepage_url,
-                related_info        = EXCLUDED.related_info,
-                jibun_address       = EXCLUDED.jibun_address,
-                latitude            = EXCLUDED.latitude,
-                longitude           = EXCLUDED.longitude,
-                api_reference_date  = EXCLUDED.api_reference_date,
-                raw_payload         = EXCLUDED.raw_payload,
-                api_last_seen_at    = EXCLUDED.api_last_seen_at,
-                updated_at          = now()
+                event_place                 = EXCLUDED.event_place,
+                end_date                    = EXCLUDED.end_date,
+                content                     = EXCLUDED.content,
+                supervisor_org              = EXCLUDED.supervisor_org,
+                host_org                    = EXCLUDED.host_org,
+                sponsor_org                 = EXCLUDED.sponsor_org,
+                phone_number                = EXCLUDED.phone_number,
+                homepage_url                = EXCLUDED.homepage_url,
+                related_info                = EXCLUDED.related_info,
+                jibun_address               = EXCLUDED.jibun_address,
+                latitude                    = EXCLUDED.latitude,
+                longitude                   = EXCLUDED.longitude,
+                api_reference_date          = EXCLUDED.api_reference_date,
+                raw_payload                 = EXCLUDED.raw_payload,
+                api_last_seen_at            = EXCLUDED.api_last_seen_at,
+                progress_status             = EXCLUDED.progress_status,
+                progress_status_updated_at  = EXCLUDED.progress_status_updated_at,
+                updated_at                  = now()
             RETURNING (xmax = 0) AS inserted
             """,
             rows,

@@ -1,0 +1,7 @@
+psycopg2-binary
+requests
+openpyxl
+
+# scheduler.py(파이썬 자체 스케줄러)를 쓸 때만 필요합니다.
+# crontab + run_status_update.py 방식만 쓴다면 없어도 됩니다.
+apscheduler

@@ -41,6 +41,12 @@ DO $$ BEGIN
     CREATE TYPE roadmap_type AS ENUM ('uploaded_image', 'icon_builder');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- [추가] 축제 진행 상태. 매번 실시간 계산하는 대신, 새벽 6시 배치(festival_status_updater.py)가
+-- 오늘 날짜와 start_date/end_date를 비교해서 이 컬럼에 미리 채워 넣는다.
+DO $$ BEGIN
+    CREATE TYPE festival_progress_status AS ENUM ('upcoming', 'ongoing', 'completed'); -- 예정 / 진행중 / 종료
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- updated_at 자동 갱신 트리거 함수 (테이블마다 매번 UPDATE 시각을 애플리케이션에서 챙기지 않아도 되도록)
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -102,6 +108,32 @@ CREATE TRIGGER trg_admins_updated_at
 
 
 -- ------------------------------------------------------------
+-- 2-1. admin_email_verification (관리자 이메일 인증 코드)
+--     회원가입 등에서 이메일로 보낸 랜덤 인증 코드를 저장/관리한다.
+--     admin_id가 아직 없는 시점(가입 전)에도 발급해야 해서 admins FK는 걸지 않고
+--     email(문자열)만 들고 있는다.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS admin_email_verification (
+    verification_id  BIGSERIAL PRIMARY KEY,
+    email             VARCHAR(255) NOT NULL,                            -- 인증 대상 이메일
+    code              VARCHAR(10)  NOT NULL,                            -- 랜덤 인증 코드 (보통 6자리 숫자)
+    purpose           VARCHAR(50)  NOT NULL DEFAULT 'signup',           -- 용도 (signup / password_reset 등, 나중 재사용 대비)
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ  NOT NULL DEFAULT now() + INTERVAL '15 minutes',  -- 발급 시점 기준 15분 뒤 만료
+    verified_at       TIMESTAMPTZ,                                      -- 인증 성공 시각 (NULL이면 아직 미인증)
+    attempt_count     INTEGER      NOT NULL DEFAULT 0                   -- 틀린 코드 시도 횟수 (무차별 대입 방지용)
+);
+
+-- 이메일+코드로 "이 코드 맞아?" 조회하는 게 핵심 사용 패턴이라 복합 인덱스로 잡았다.
+CREATE INDEX IF NOT EXISTS idx_admin_email_verification_email_code
+    ON admin_email_verification (email, code);
+
+-- 만료된 행을 주기적으로 지우는 배치(admin_email_verification_cleaner.py)가 쓰는 인덱스.
+CREATE INDEX IF NOT EXISTS idx_admin_email_verification_expires_at
+    ON admin_email_verification (expires_at);
+
+
+-- ------------------------------------------------------------
 -- 3. festivals (축제 api) — 이전 festival_api_raw 파이프라인의 마스터 테이블
 --    다른 모든 테이블이 festival_id를 참조하는 허브 테이블
 -- ------------------------------------------------------------
@@ -129,6 +161,8 @@ CREATE TABLE IF NOT EXISTS festivals (
     api_last_seen_at                                     TIMESTAMPTZ,                          -- [추가] api_loader가 이 축제를 마지막으로 확인한 시각 (아래 참고)
     loaded_at                                              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                                               TIMESTAMPTZ NOT NULL DEFAULT now(),  -- [추가] 파이프라인 재적재 시각
+    progress_status                                            festival_progress_status,             -- [추가] 예정/진행중/종료. NULL이면 아직 배치가 안 돌았거나 start_date/end_date가 없어서 판단 불가
+    progress_status_updated_at                                   TIMESTAMPTZ,                          -- [추가] progress_status를 마지막으로 계산한 시각
     CONSTRAINT chk_festivals_source_admin CHECK (
         (source_type = 'manual' AND created_by_admin_id IS NOT NULL) OR
         (source_type = 'api'    AND created_by_admin_id IS NULL)
@@ -147,6 +181,13 @@ CREATE TABLE IF NOT EXISTS festivals (
     --      새 행으로 다시 들어갈 수 있다는 한계가 있으니, 매칭 실패가 잦으면
     --      이 자연키를 조정하거나 API 응답에서 더 안정적인 필드가 있는지 확인해야 합니다.
 );
+
+-- [추가] 이미 만들어져 있던 festivals 테이블에도 안전하게 컬럼을 추가한다 (재실행해도 안전).
+ALTER TABLE festivals ADD COLUMN IF NOT EXISTS progress_status festival_progress_status;
+ALTER TABLE festivals ADD COLUMN IF NOT EXISTS progress_status_updated_at TIMESTAMPTZ;
+
+-- [추가] "지금 진행중인 축제만" 같은 조회가 많을 것이므로 인덱스를 걸어둔다.
+CREATE INDEX IF NOT EXISTS idx_festivals_progress_status ON festivals (progress_status);
 
 -- [추가] api_loader UPSERT용 자연키 (source_type='api'인 행에만 적용).
 --       NULL은 유니크 비교에서 항상 "다른 값"으로 취급되므로 COALESCE로 감싸서

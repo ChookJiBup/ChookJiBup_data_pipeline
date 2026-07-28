@@ -1,5 +1,5 @@
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 
@@ -19,6 +19,53 @@ def parse_date(year, month, day) -> Optional[date]:
         return date(int(year), int(month), int(day))
     except (ValueError, TypeError):
         return None
+
+
+def parse_date_string(value) -> Optional[date]:
+    """API가 내려주는 단일 문자열 날짜(예: "2025-06-14", "20250614")를 date로 파싱한다.
+
+    실제 저장 컬럼(festivals.start_date/end_date)은 원본 문자열을 그대로 psycopg2/Postgres에
+    넘겨서 Postgres가 알아서 캐스팅하게 두고 있다 (이미 잘 동작 중이라 건드리지 않음).
+    이 함수는 오직 progress_status를 파이썬에서 미리 계산하기 위한 용도라, 파싱에
+    실패해도(포맷이 낯설어도) 에러 없이 None을 반환해서 progress_status만 NULL로
+    남기고 넘어간다.
+    """
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def compute_progress_status(
+    start_date: Optional[date],
+    end_date: Optional[date],
+    today: Optional[date] = None,
+) -> Optional[str]:
+    """festival_status_updater.py의 SQL 계산 규칙과 동일하다 (파이썬 쪽에서도 같은 규칙 사용).
+
+    - start_date/end_date 둘 중 하나라도 없으면 판단 불가 -> None
+    - 오늘 < start_date  -> 'upcoming' (예정)
+    - 오늘 > end_date    -> 'completed' (종료)
+    - 그 사이            -> 'ongoing' (진행중)
+    """
+    if today is None:
+        today = date.today()
+    if start_date is None or end_date is None:
+        return None
+    if today < start_date:
+        return "upcoming"
+    if today > end_date:
+        return "completed"
+    return "ongoing"
 
 
 def to_num(value):
