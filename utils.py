@@ -1,6 +1,7 @@
 import re
 from datetime import date, datetime
 from typing import Optional
+from urllib.parse import urlsplit
 
 
 def normalize_festival_name(name: Optional[str]) -> str:
@@ -90,3 +91,19 @@ def to_int(value):
         return int(n)
     except (ValueError, TypeError):
         return None
+
+
+def image_url_from_item(item):
+    """원본에 공개 HTTP(S) 이미지 주소가 있는 경우에만 적재한다."""
+    for key in ("imageUrl", "firstimage", "firstimage2", "thumbnailUrl", "posterUrl"):
+        value = item.get(key)
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            continue
+        if parsed.scheme in ("http", "https") and parsed.hostname and not parsed.username and not parsed.password:
+            return value
+    return None

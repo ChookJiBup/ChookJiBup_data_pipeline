@@ -7,7 +7,7 @@ import psycopg2.extras
 
 from config import API_CONFIG
 from db import get_conn
-from utils import to_num, parse_date_string, compute_progress_status
+from utils import to_num, parse_date_string, compute_progress_status, image_url_from_item
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +128,7 @@ def save(items):
                 it.get("suprtInsttNm"),
                 it.get("phoneNumber") or it.get("phoneNum"),
                 it.get("homepageUrl") or it.get("rdnmadr"),
+                image_url_from_item(it),
                 it.get("relateInfo"),
                 road_address,
                 it.get("lnmAddr"),
@@ -156,7 +157,7 @@ def save(items):
             """
             INSERT INTO festivals (
                 festival_name, event_place, start_date, end_date, content,
-                supervisor_org, host_org, sponsor_org, phone_number, homepage_url,
+                supervisor_org, host_org, sponsor_org, phone_number, homepage_url, image_url,
                 related_info, road_address, jibun_address, latitude, longitude,
                 api_reference_date, raw_payload, api_last_seen_at,
                 progress_status, progress_status_updated_at
@@ -172,6 +173,7 @@ def save(items):
                 sponsor_org                 = EXCLUDED.sponsor_org,
                 phone_number                = EXCLUDED.phone_number,
                 homepage_url                = EXCLUDED.homepage_url,
+                image_url                   = COALESCE(festivals.image_url, EXCLUDED.image_url),
                 related_info                = EXCLUDED.related_info,
                 jibun_address               = EXCLUDED.jibun_address,
                 latitude                    = EXCLUDED.latitude,

@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS festivals (
 );
 
 -- [추가] 이미 만들어져 있던 festivals 테이블에도 안전하게 컬럼을 추가한다 (재실행해도 안전).
+ALTER TABLE festivals ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE festivals ADD COLUMN IF NOT EXISTS progress_status festival_progress_status;
 ALTER TABLE festivals ADD COLUMN IF NOT EXISTS progress_status_updated_at TIMESTAMPTZ;
 
